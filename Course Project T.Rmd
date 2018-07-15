@@ -1,0 +1,141 @@
+---
+title: "Practical Machine learning"
+author: "Alexander"
+date: "7/7/2018"
+output: html_document
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE, message=FALSE, results = 'hide', warning = FALSE)
+
+```
+
+
+```{r, echo=FALSE}
+system("defaults write org.R-project.R force.LANG en_US.UTF-8")
+Sys.setenv(TZ="Europe/Moscow")
+setwd("/Users/i312190/Desktop/Data Science/Unit 8/")
+library(caret)
+#-----
+library(parallel)
+library(doParallel)
+library(lattice)
+library(ggplot2)
+library(foreach)
+library(iterators)
+#-----------
+```
+
+##Data preparation
+
+We will load data sets and and exclude variables whose contains more 50% NAs either in test or training data sets and time stamp related variables. Suppose their influence is not valuable, we can check it on the plot below.
+
+```{r}
+raw.test <- read.csv("pml-testing.csv")
+raw.train <- read.csv("pml-training.csv")
+
+#What columns are useles Test
+NA.Col.Test <- names(raw.test[, colMeans(is.na(raw.test)) >= 0.50])
+#What columns are useles Train
+NA.Col.Train <- names(raw.train[, colMeans(is.na(raw.train)) >= 0.50])
+NA.Col.Res <- unique(c(NA.Col.Test,NA.Col.Train ))
+#-----------------
+# Intersect useles columns
+#NA.Col.Res <- intersect( NA.Col.Test, NA.Col.Train)
+#------------------
+#Exclude intersection from both datasets
+start.test <- raw.test[, !names(raw.test) %in% NA.Col.Res]
+start.train <- raw.train[, !names(raw.train) %in% NA.Col.Res]
+#Exclude timestemp, name and ID from both datasets
+start.test <- start.test[, -c(1, 2, 3, 4, 5, 6)]
+start.train <- start.train[, -c(1, 2, 3, 4, 5, 6)]
+```
+Thus our data sets reduced to `r I(dim(start.train))` variables.
+```{r, results='asis'}
+#plotting correlation
+plot( raw.train$cvtd_timestamp, raw.train$classe, main = 'Time & Classe correlation', xlab = 'Time', ylab = 'Classe')
+```
+
+##Model training
+
+Then we will build blocs for model training, and set up parallel execution.
+In order to limit the effects of overfitting, and improve the efficicency of the models, we will use the cross-validation technique.
+```{r}
+#Building data blocks
+test.train <- createDataPartition(start.train$classe, p=0.75, list=FALSE)
+start.train.train <- start.train[ test.train, ]
+start.train.test <- start.train[ - test.train, ]
+
+Tr.block <- trainControl(method = "cv", allowParallel = TRUE, number = 5) 
+```
+
+First model - classification tree. Probably wouldn't provide us best accuracy.
+```{r, results='asis'}
+
+#classification tree
+#---- Parallel execution start
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+#----
+Cl.Tr.model <- train(classe ~ ., data = start.train.train, trControl = Tr.block, method="rpart")
+#
+#--------Parallel execution stop
+stopCluster(cluster)
+registerDoSEQ()
+#-----------
+cl.tr.predict <- predict(Cl.Tr.model, newdata = start.train.test )
+cl.tr.confmatr <- confusionMatrix(start.train.test$classe, cl.tr.predict )
+#cl.tr.confmatr$overall
+cl.tr.confmatr.acc <- cl.tr.confmatr$overall[1]
+```
+Model accuracy is `r I(round(cl.tr.confmatr.acc, digits = 4) )`.
+
+Second model is Random Forest.
+```{r, results='asis'}
+#random forest
+#--------Parallel execution start
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+#-------------
+Ran.for.model <- train(classe ~ ., data = start.train.train, trControl = Tr.block, method="rf", verbose = FALSE)
+#-----Parallel execution stop
+stopCluster(cluster)
+registerDoSEQ()
+#____
+Ran.for.predict <- predict(Ran.for.model, newdata = start.train.test )
+Ran.for.confmatr <- confusionMatrix(start.train.test$classe, Ran.for.predict )
+ran.for.confmatr.acc <- Ran.for.confmatr$overall[1]
+
+#Variable names
+#names(Ran.for.model$finalModel)
+```
+Model accuracy is `r I(round(ran.for.confmatr.acc, digits = 4) )`.
+
+Next one - Gradient Boosting.
+```{r, results='asis'}
+#Gradient boosting
+#--------Parallel execution start
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+#-----------
+Gr.B.model <- train(classe ~ ., data = start.train.train, trControl = Tr.block, method="gbm", verbose = FALSE)
+#-----Parallel execution stop
+stopCluster(cluster)
+registerDoSEQ()
+#____
+GR.B.predict <- predict(Gr.B.model, newdata = start.train.test )
+Gr.B.confmatr <- confusionMatrix(start.train.test$classe, GR.B.predict )
+Gr.B.confmatr.acc <- Gr.B.confmatr$overall[1]
+#Gr.B.confmatr$overall[1]
+```
+Model accuracy is `r I(round(Gr.B.confmatr.acc, digits = 4) )`.
+
+
+## Results
+
+Because randon forest has higher accuracy for resul test we will choose it.
+```{r,results='asis'}
+Ran.for.test.predict <- predict(Ran.for.model, newdata = start.test  )
+Ran.for.test.predict
+```
